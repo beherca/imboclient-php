@@ -1,5 +1,6 @@
-build
-phpunit.xml
-ImboClient-*.tgz
-composer.phar
 vendor
+app/cache/
+app/logs/dev.log
+app/logs/prod.log
+app/config/
+.idea/
