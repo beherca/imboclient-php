@@ -128,6 +128,13 @@ class Response implements ResponseInterface {
     public function getImageIdentifier() {
         return $this->getHeaders()->get('x-imbo-imageidentifier');
     }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getFileIdentifier() {
+      return $this->getHeaders()->get('x-imbo-fileidentifier');
+    }
 
     /**
      * {@inheritdoc}

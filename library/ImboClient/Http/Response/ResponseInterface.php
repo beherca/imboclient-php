@@ -115,6 +115,16 @@ interface ResponseInterface {
      * @return string|null
      */
     function getImageIdentifier();
+    
+    /**
+     * Returns the file identifier associated with the response
+     *
+     * If the response does not contain any file identitifer (for instance if the reguest made was
+     * against the metadat resource) NULL will be returned.
+     *
+     * @return string|null
+     */
+    function getFileIdentifier();    
 
     /**
      * Return the body as an array
