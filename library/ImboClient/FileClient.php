@@ -14,7 +14,7 @@ use ImboClient\Driver\DriverInterface,
     ImboClient\Driver\cURL as DefaultDriver,
     ImboClient\Url\Files\FileInterface,
     ImboClient\Url\Files\File,
-    ImboClient\Url\Files\QueryInterface,
+    ImboClient\Url\Images\QueryInterface,
     ImboClient\Exception\InvalidArgumentException,
     ImboClient\Exception\ServerException,
     DateTime,
@@ -116,6 +116,306 @@ class FileClient implements ClientInterface {
     public function getUserUrl() {
         return new Url\User($this->serverUrls[0], $this->publicKey, $this->privateKey);
     }
+    
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getImagesUrl() {
+      return new Url\Images($this->serverUrls[0], $this->publicKey, $this->privateKey);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageUrl($imageIdentifier) {
+      $hostname = $this->getHostForImageIdentifier($imageIdentifier);
+    
+      return new Url\Image($hostname, $this->publicKey, $this->privateKey, $imageIdentifier);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getMetadataUrl($imageIdentifier) {
+      $hostname = $this->getHostForImageIdentifier($imageIdentifier);
+    
+      return new Url\Metadata($hostname, $this->publicKey, $this->privateKey, $imageIdentifier);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function addImage($path) {
+      $imageIdentifier = $this->getImageIdentifier($path);
+      $imageUrl = $this->getImageUrl($imageIdentifier)->getUrl();
+    
+      $url = $this->getSignedUrl(DriverInterface::PUT, $imageUrl);
+    
+      return $this->driver->put($url, $path);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function addImageFromString($image) {
+      if (empty($image)) {
+        throw new InvalidArgumentException('Specified image is empty');
+      }
+    
+      $imageIdentifier = $this->getImageIdentifierFromString($image);
+      $imageUrl = $this->getImageUrl($imageIdentifier)->getUrl();
+    
+      $url = $this->getSignedUrl(DriverInterface::PUT, $imageUrl);
+    
+      return $this->driver->putData($url, $image);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function addImageFromUrl($url) {
+      if ($url instanceof Url\ImageInterface) {
+        $url = $url->getUrl();
+      }
+    
+      $response = $this->driver->get($url);
+    
+      return $this->addImageFromString($response->getBody());
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function imageExists($path) {
+      $imageIdentifier = $this->getImageIdentifier($path);
+    
+      return $this->imageIdentifierExists($imageIdentifier);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function imageIdentifierExists($imageIdentifier) {
+      try {
+        $response = $this->headImage($imageIdentifier);
+      } catch (ServerException $e) {
+        if ($e->getCode() === 404) {
+          return false;
+        }
+    
+        throw $e;
+      }
+    
+      return true;
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function headImage($imageIdentifier) {
+      $url = $this->getImageUrl($imageIdentifier)->getUrl();
+    
+      return $this->driver->head($url);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteImage($imageIdentifier) {
+      $imageUrl = $this->getImageUrl($imageIdentifier)->getUrl();
+      $url = $this->getSignedUrl(DriverInterface::DELETE, $imageUrl);
+    
+      return $this->driver->delete($url);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function editMetadata($imageIdentifier, array $metadata) {
+      $metadataUrl = $this->getMetadataUrl($imageIdentifier)->getUrl();
+      $url = $this->getSignedUrl(DriverInterface::POST, $metadataUrl);
+    
+      $data = json_encode($metadata);
+    
+      return $this->driver->post($url, $data, array(
+          'Content-Type' => 'application/json',
+          'Content-Length' => strlen($data),
+          'Content-MD5' => md5($data),
+      ));
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function replaceMetadata($imageIdentifier, array $metadata) {
+      $metadataUrl = $this->getMetadataUrl($imageIdentifier)->getUrl();
+      $url = $this->getSignedUrl(DriverInterface::PUT, $metadataUrl);
+    
+      $data = json_encode($metadata);
+    
+      return $this->driver->putData($url, $data, array(
+          'Content-Type' => 'application/json',
+          'Content-Length' => strlen($data),
+          'Content-MD5' => md5($data),
+      ));
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteMetadata($imageIdentifier) {
+      $metadataUrl = $this->getMetadataUrl($imageIdentifier)->getUrl();
+      $url = $this->getSignedUrl(DriverInterface::DELETE, $metadataUrl);
+    
+      return $this->driver->delete($url);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getMetadata($imageIdentifier) {
+      $url = $this->getMetadataUrl($imageIdentifier)->getUrl();
+      $response = $this->driver->get($url);
+    
+      $body = json_decode($response->getBody(), true);
+    
+      return $body;
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getNumImages() {
+      $url = $this->getUserUrl()->getUrl();
+      $response = $this->driver->get($url);
+    
+      $body = json_decode($response->getBody());
+    
+      return (int) $body->numImages;
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImages(QueryInterface $query = null) {
+      $params = array();
+    
+      if ($query) {
+        // Retrieve query parameters, reduce array down to non-empty values
+        $params = array_filter(array(
+            'page'      => $query->page(),
+            'limit'     => $query->limit(),
+            'metadata'  => $query->returnMetadata(),
+            'from'      => $query->from(),
+            'to'        => $query->to(),
+            'query'     => $query->metadataQuery(),
+        ), function($item) {
+          return !empty($item);
+        });
+    
+        // JSON-encode metadata query, if present
+        if (isset($params['query'])) {
+          $params['query'] = json_encode($params['query']);
+        }
+      }
+    
+      $url = $this->getImagesUrl();
+    
+      // Add query params
+      foreach ($params as $key => $value) {
+        $url->addQueryParam($key, $value);
+      }
+    
+      // Fetch the response
+      $response = $this->driver->get($url->getUrl());
+    
+      $images = json_decode($response->getBody(), true);
+      $instances = array();
+    
+      foreach ($images as $image) {
+        $instances[] = new Image($image);
+      }
+    
+      return $instances;
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageData($imageIdentifier) {
+      $url = $this->getImageUrl($imageIdentifier);
+    
+      return $this->getImageDataFromUrl($url);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageDataFromUrl(Url\ImageInterface $url) {
+      return $this->driver->get($url->getUrl())->getBody();
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageProperties($imageIdentifier) {
+      $response = $this->headImage($imageIdentifier);
+      $headers = $response->getHeaders();
+    
+      return array(
+          'width'     => (int) $headers->get('x-imbo-originalwidth'),
+          'height'    => (int) $headers->get('x-imbo-originalheight'),
+          'filesize'  => (int) $headers->get('x-imbo-originalfilesize'),
+          'mimetype'  => $headers->get('x-imbo-originalmimetype'),
+          'extension' => $headers->get('x-imbo-originalextension')
+      );
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageIdentifier($path) {
+      $this->validateLocalFile($path);
+    
+      return $this->generateImageIdentifier(
+          file_get_contents($path)
+      );
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getImageIdentifierFromString($image) {
+      return $this->generateImageIdentifier($image);
+    }
+    
+    /**
+     * {@inheritdoc}
+     */
+    public function getUserInfo() {
+      $url = $this->getUserUrl()->getUrl();
+    
+      $response = $this->driver->get($url);
+      $data = json_decode($response->getBody(), true);
+      $data['lastModified'] = new DateTime($data['lastModified'], new DateTimeZone('UTC'));
+    
+      return $data;
+    }
+    
+    /**
+     * Get a predictable hostname for the given image identifier
+     *
+     * @param string $imageIdentifier The image identifier
+     * @return string
+     */
+    private function getHostForImageIdentifier($imageIdentifier) {
+      $dec = hexdec($imageIdentifier[0] . $imageIdentifier[1]);
+    
+      return $this->serverUrls[$dec % count($this->serverUrls)];
+    }
+    
+    //==============================File ========================
 
     /**
      * {@inheritdoc}
@@ -136,7 +436,7 @@ class FileClient implements ClientInterface {
     /**
      * {@inheritdoc}
      */
-    public function getMetadataUrl($fileIdentifier) {
+    public function getFileMetadataUrl($fileIdentifier) {
         $hostname = $this->getHostForFileIdentifier($fileIdentifier);
 
         return new Url\Metadata($hostname, $this->publicKey, $this->privateKey, $fileIdentifier);
@@ -231,8 +531,8 @@ class FileClient implements ClientInterface {
     /**
      * {@inheritdoc}
      */
-    public function editMetadata($fileIdentifier, array $metadata) {
-        $metadataUrl = $this->getMetadataUrl($fileIdentifier)->getUrl();
+    public function editFileMetadata($fileIdentifier, array $metadata) {
+        $metadataUrl = $this->getFileMetadataUrl($fileIdentifier)->getUrl();
         $url = $this->getSignedUrl(DriverInterface::POST, $metadataUrl);
 
         $data = json_encode($metadata);
@@ -247,8 +547,8 @@ class FileClient implements ClientInterface {
     /**
      * {@inheritdoc}
      */
-    public function replaceMetadata($fileIdentifier, array $metadata) {
-        $metadataUrl = $this->getMetadataUrl($fileIdentifier)->getUrl();
+    public function replaceFileMetadata($fileIdentifier, array $metadata) {
+        $metadataUrl = $this->getFileMetadataUrl($fileIdentifier)->getUrl();
         $url = $this->getSignedUrl(DriverInterface::PUT, $metadataUrl);
 
         $data = json_encode($metadata);
@@ -263,8 +563,8 @@ class FileClient implements ClientInterface {
     /**
      * {@inheritdoc}
      */
-    public function deleteMetadata($fileIdentifier) {
-        $metadataUrl = $this->getMetadataUrl($fileIdentifier)->getUrl();
+    public function deleteFileMetadata($fileIdentifier) {
+        $metadataUrl = $this->getFileMetadataUrl($fileIdentifier)->getUrl();
         $url = $this->getSignedUrl(DriverInterface::DELETE, $metadataUrl);
 
         return $this->driver->delete($url);
@@ -273,8 +573,8 @@ class FileClient implements ClientInterface {
     /**
      * {@inheritdoc}
      */
-    public function getMetadata($fileIdentifier) {
-        $url = $this->getMetadataUrl($fileIdentifier)->getUrl();
+    public function getFileMetadata($fileIdentifier) {
+        $url = $this->getFileMetadataUrl($fileIdentifier)->getUrl();
         $response = $this->driver->get($url);
 
         $body = json_decode($response->getBody(), true);
@@ -407,19 +707,6 @@ class FileClient implements ClientInterface {
         }
 
         return json_decode($response->getBody(), true);
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function getUserInfo() {
-        $url = $this->getUserUrl()->getUrl();
-
-        $response = $this->driver->get($url);
-        $data = json_decode($response->getBody(), true);
-        $data['lastModified'] = new DateTime($data['lastModified'], new DateTimeZone('UTC'));
-
-        return $data;
     }
 
     /**
