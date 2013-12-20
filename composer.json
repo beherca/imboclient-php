@@ -1,5 +1,5 @@
 {
-  "name": "imbo/imboclient",
+  "name": "beherca/imboclient",
   "type": "library",
   "description": "Client for Imbo servers written in PHP",
   "keywords": [ "image storage", "image transformation", "image metadata" ],
@@ -15,6 +15,10 @@
       "email": "espen@hovlandsdal.com",
       "role": "Developer",
       "homepage": "http://rexxars.com"
+    }, {
+      "name": "Beherca",
+      "email": "beherca@gmail.com",
+      "role": "Developer"
     }
   ],
   "require": {
